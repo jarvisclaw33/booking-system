@@ -1,0 +1,51 @@
+{
+  "name": "booking-system",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test:db": "node test-db.js",
+    "test:api": "node test-api.js",
+    "test:verbose": "node test-db-verbose.js",
+    "push:schema": "node push-schema.js",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:generate-types": "supabase gen types typescript --local > types/database.ts"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^3.9.0",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@supabase/ssr": "^0.5.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@tanstack/react-query": "^5.62.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.0.0",
+    "lucide-react": "^0.460.0",
+    "next": "^15.0.0",
+    "pg": "^8.18.0",
+    "react": "^19.0.0-rc",
+    "react-dom": "^19.0.0-rc",
+    "react-hook-form": "^7.53.0",
+    "sonner": "^1.7.0",
+    "tailwind-merge": "^3.4.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.24",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "supabase": "^1.200.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.6.0"
+  }
+}
