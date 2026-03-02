@@ -145,27 +145,59 @@ export default function BookingsPage() {
     fetchData();
   }, [fetchData]);
 
+  // Auto-set form defaults when locations/offerings are loaded
+  useEffect(() => {
+    if (locations.length > 0 && !formLocation) {
+      setFormLocation(locations[0].id);
+    }
+    if (offerings.length > 0 && !formOffering) {
+      setFormOffering(offerings[0].id);
+    }
+    // Default Zeit: jetzt + 1 Stunde
+    if (!formDate || !formTime) {
+      const now = new Date();
+      now.setHours(now.getHours() + 1, 0, 0, 0);
+      setFormDate(now.toISOString().split('T')[0]);
+      setFormTime(now.toTimeString().slice(0, 5));
+    }
+  }, [locations, offerings]);
+
   const handleCreate = async () => {
-    if (!formLocation || !formOffering || !formDate || !formTime || !formCustomerName || !formCustomerEmail) {
-      toast.error('Bitte füllen Sie alle Pflichtfelder aus');
+    // NUR Name und Datum sind Pflicht!
+    if (!formDate || !formTime || !formCustomerName) {
+      toast.error('Bitte Name und Datum eingeben');
       return;
     }
 
     setSubmitting(true);
     try {
       const startTime = new Date(`${formDate}T${formTime}`);
+      
+      // Default: 60 Minuten wenn keine Offering angegeben
       const offering = offerings.find(o => o.id === formOffering);
-      const endTime = new Date(startTime.getTime() + (offering?.duration_minutes || 60) * 60000);
+      const durationMinutes = offering?.duration_minutes || 60;
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+
+      // Auto-select first location if none selected
+      let finalLocationId = formLocation;
+      let finalOfferingId = formOffering;
+      
+      if (!finalLocationId && locations.length > 0) {
+        finalLocationId = locations[0].id;
+      }
+      if (!finalOfferingId && offerings.length > 0) {
+        finalOfferingId = offerings[0].id;
+      }
 
       if (isMockMode()) {
         const newBooking = {
           id: `booking-${Date.now()}`,
-          location_id: formLocation,
+          location_id: finalLocationId,
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           status: formStatus,
           guest_name: formCustomerName,
-          location: locations.find(l => l.id === formLocation)
+          location: locations.find(l => l.id === finalLocationId)
         };
         setBookings([newBooking, ...bookings]);
         toast.success('Buchung erstellt');
@@ -174,11 +206,11 @@ export default function BookingsPage() {
       }
 
       const { error } = await supabase.from('bookings').insert({
-        location_id: formLocation,
-        offering_id: formOffering,
+        location_id: finalLocationId,
+        offering_id: finalOfferingId || null,
         resource_id: formResource || null,
         customer_name: formCustomerName,
-        customer_email: formCustomerEmail,
+        customer_email: formCustomerEmail || null,
         customer_phone: formCustomerPhone || null,
         start_time: startTime.toISOString(),
         end_time: endTime.toISOString(),
@@ -201,11 +233,15 @@ export default function BookingsPage() {
 
   const closeModal = () => {
     setShowCreateModal(false);
-    setFormLocation('');
-    setFormOffering('');
+    // Reset with smart defaults
+    setFormLocation(locations[0]?.id || '');
+    setFormOffering(offerings[0]?.id || '');
     setFormResource('');
-    setFormDate('');
-    setFormTime('');
+    // Default: heute + 1 Stunde
+    const now = new Date();
+    now.setHours(now.getHours() + 1, 0, 0, 0);
+    setFormDate(now.toISOString().split('T')[0]);
+    setFormTime(now.toTimeString().slice(0, 5));
     setFormCustomerName('');
     setFormCustomerEmail('');
     setFormCustomerPhone('');
@@ -414,68 +450,31 @@ export default function BookingsPage() {
 
       {/* Create Booking Modal */}
       <Dialog open={showCreateModal} onOpenChange={closeModal}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Neue Buchung erstellen</DialogTitle>
+            <DialogTitle>Neue Buchung</DialogTitle>
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            {/* Location */}
+            {/* Name - PFICHTFELD */}
             <div>
-              <label className="block text-sm font-medium mb-1">Standort *</label>
-              <select
-                value={formLocation}
-                onChange={(e) => setFormLocation(e.target.value)}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              >
-                <option value="">Standort wählen...</option>
-                {locations.map(loc => (
-                  <option key={loc.id} value={loc.id}>{loc.name}</option>
-                ))}
-              </select>
+              <label className="block text-sm font-medium mb-1">Name *</label>
+              <Input
+                value={formCustomerName}
+                onChange={(e) => setFormCustomerName(e.target.value)}
+                placeholder="Max Mustermann"
+                autoFocus
+              />
             </div>
 
-            {/* Offering */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Leistung *</label>
-              <select
-                value={formOffering}
-                onChange={(e) => setFormOffering(e.target.value)}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                required
-              >
-                <option value="">Leistung wählen...</option>
-                {offerings.map(off => (
-                  <option key={off.id} value={off.id}>{off.name} ({off.duration_minutes} Min.)</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Resource (optional) */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Mitarbeiter (optional)</label>
-              <select
-                value={formResource}
-                onChange={(e) => setFormResource(e.target.value)}
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-              >
-                <option value="">Beliebig</option>
-                {resources.filter(r => r.type === 'staff').map(res => (
-                  <option key={res.id} value={res.id}>{res.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Date & Time */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Datum & Zeit - PFICHTFELD */}
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium mb-1">Datum *</label>
                 <Input
                   type="date"
                   value={formDate}
                   onChange={(e) => setFormDate(e.target.value)}
-                  required
                 />
               </div>
               <div>
@@ -484,58 +483,63 @@ export default function BookingsPage() {
                   type="time"
                   value={formTime}
                   onChange={(e) => setFormTime(e.target.value)}
-                  required
                 />
               </div>
             </div>
 
-            {/* Customer Details */}
+            {/* Optional: Location (auto-select first) */}
             <div>
-              <label className="block text-sm font-medium mb-1">Kundenname *</label>
-              <Input
-                value={formCustomerName}
-                onChange={(e) => setFormCustomerName(e.target.value)}
-                placeholder="Max Mustermann"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">E-Mail *</label>
-              <Input
-                type="email"
-                value={formCustomerEmail}
-                onChange={(e) => setFormCustomerEmail(e.target.value)}
-                placeholder="max@example.de"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">Telefon</label>
-              <Input
-                type="tel"
-                value={formCustomerPhone}
-                onChange={(e) => setFormCustomerPhone(e.target.value)}
-                placeholder="+49 123 456789"
-              />
-            </div>
-
-            {/* Status */}
-            <div>
-              <label className="block text-sm font-medium mb-1">Status</label>
+              <label className="block text-sm font-medium mb-1">Standort</label>
               <select
-                value={formStatus}
-                onChange={(e) => setFormStatus(e.target.value as any)}
+                value={formLocation}
+                onChange={(e) => setFormLocation(e.target.value)}
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
               >
-                <option value="pending">Ausstehend</option>
-                <option value="confirmed">Bestätigt</option>
-                <option value="cancelled">Storniert</option>
+                <option value="">Auto (erster)</option>
+                {locations.map(loc => (
+                  <option key={loc.id} value={loc.id}>{loc.name}</option>
+                ))}
               </select>
             </div>
 
-            {/* Notes */}
+            {/* Optional: Leistung */}
+            <div>
+              <label className="block text-sm font-medium mb-1">Leistung</label>
+              <select
+                value={formOffering}
+                onChange={(e) => setFormOffering(e.target.value)}
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              >
+                <option value="">Standard (60 Min)</option>
+                {offerings.map(off => (
+                  <option key={off.id} value={off.id}>{off.name} ({off.duration_minutes} Min.)</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Optional: Kontakt */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1">E-Mail</label>
+                <Input
+                  type="email"
+                  value={formCustomerEmail}
+                  onChange={(e) => setFormCustomerEmail(e.target.value)}
+                  placeholder="optional"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Telefon</label>
+                <Input
+                  type="tel"
+                  value={formCustomerPhone}
+                  onChange={(e) => setFormCustomerPhone(e.target.value)}
+                  placeholder="optional"
+                />
+              </div>
+            </div>
+
+            {/* Notizen */}
             <div>
               <label className="block text-sm font-medium mb-1">Notizen</label>
               <textarea
@@ -543,11 +547,12 @@ export default function BookingsPage() {
                 onChange={(e) => setFormNotes(e.target.value)}
                 className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                 rows={2}
+                placeholder="Optional..."
               />
             </div>
 
             {/* Actions */}
-            <div className="flex gap-3 pt-4">
+            <div className="flex gap-3 pt-2">
               <Button variant="outline" onClick={closeModal} className="flex-1">
                 Abbrechen
               </Button>
@@ -556,7 +561,7 @@ export default function BookingsPage() {
                 disabled={submitting}
                 className="flex-1"
               >
-                {submitting ? 'Wird erstellt...' : 'Buchung erstellen'}
+                {submitting ? '...' : 'Erstellen'}
               </Button>
             </div>
           </div>

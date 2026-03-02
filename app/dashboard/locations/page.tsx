@@ -106,9 +106,9 @@ export default function LocationsPage() {
       toast.success('Standort erfolgreich erstellt');
       closeModal();
       fetchLocations();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating location:', error);
-      toast.error('Standort konnte nicht erstellt werden');
+      toast.error(error?.message || 'Standort konnte nicht erstellt werden');
     } finally {
       setSubmitting(false);
     }
@@ -256,7 +256,7 @@ export default function LocationsPage() {
 
       {/* Create/Edit Modal */}
       <Dialog open={showModal} onOpenChange={closeModal}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingLocation ? 'Standort bearbeiten' : 'Neuen Standort erstellen'}

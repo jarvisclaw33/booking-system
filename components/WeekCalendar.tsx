@@ -1,6 +1,7 @@
 // @ts-nocheck
 'use client';
 
+import { useState, useEffect } from 'react';
 import {
   format,
   startOfWeek,
@@ -91,8 +92,27 @@ export function WeekCalendar({
     };
   };
 
-  // On mobile, show only 1 day. On tablet, show 4 days. On desktop, show all 7.
-  const visibleDays = days.slice(0, 1); // Default: mobile shows 1 day
+  // Responsive: mobile 1 day, tablet 3 days, desktop 7 days
+  const [visibleDaysCount, setVisibleDaysCount] = useState(7);
+  
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    const updateVisibleDays = () => {
+      const width = window.innerWidth;
+      if (width < 640) setVisibleDaysCount(1);       // mobile
+      else if (width < 1024) setVisibleDaysCount(3); // tablet
+      else setVisibleDaysCount(7);                   // desktop
+    };
+    updateVisibleDays();
+    window.addEventListener('resize', updateVisibleDays);
+    return () => window.removeEventListener('resize', updateVisibleDays);
+  }, []);
+
+  // Start from today (or current week day) instead of always from Monday
+  const today = new Date();
+  const todayIndex = days.findIndex(day => isSameDay(day, today));
+  const startIndex = todayIndex >= 0 && todayIndex < visibleDaysCount ? todayIndex : 0;
+  const visibleDays = days.slice(startIndex, startIndex + visibleDaysCount);
 
   return (
     <div className="space-y-4">

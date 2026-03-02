@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
-import { LogOut } from 'lucide-react';
+import { LogOut, Building2, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -16,11 +16,69 @@ interface UserSettings {
   createdAt?: string;
 }
 
+interface Organization {
+  id: string;
+  name: string;
+}
+
 export default function SettingsPage() {
   const [settings, setSettings] = useState<UserSettings>({});
+  const [organization, setOrganization] = useState<Organization | null>(null);
+  const [orgLoading, setOrgLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const supabase = createClient();
   const router = useRouter();
+
+  const fetchOrganization = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('user_organizations')
+        .select('organization_id, organizations(id, name)')
+        .eq('user_id', userId)
+        .single();
+      
+      if (data?.organizations) {
+        setOrganization(data.organizations);
+      }
+    } catch (err) {
+      console.log('No organization found');
+    }
+  };
+
+  const createOrganization = async () => {
+    try {
+      setOrgLoading(true);
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const email = user.email || 'user';
+      const orgName = `${email.split('@')[0]}'s Organization`;
+
+      const { data: org, error: orgError } = await supabase
+        .from('organizations')
+        .insert({ name: orgName })
+        .select()
+        .single();
+
+      if (orgError) throw orgError;
+
+      await supabase
+        .from('user_organizations')
+        .insert({
+          user_id: user.id,
+          organization_id: org.id,
+          role: 'owner'
+        });
+
+      setOrganization(org);
+      toast.success('Organisation erstellt!');
+    } catch (error: any) {
+      console.error('Org creation error:', error);
+      toast.error(error?.message || 'Organisation konnte nicht erstellt werden');
+    } finally {
+      setOrgLoading(false);
+    }
+  };
 
   useEffect(() => {
     const fetchUserSettings = async () => {
@@ -43,6 +101,8 @@ export default function SettingsPage() {
             email: user.email,
             createdAt: user.created_at,
           });
+          // Fetch organization
+          await fetchOrganization(user.id);
         }
       } catch (error) {
         toast.error('Einstellungen konnten nicht geladen werden');
@@ -131,6 +191,46 @@ export default function SettingsPage() {
                 Passwort ändern
               </Button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Organization Section */}
+      <div className="rounded-lg border border-gray-200 bg-white p-4 sm:p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4 dark:text-slate-100 flex items-center gap-2">
+          <Building2 className="h-5 w-5" />
+          Organisation
+        </h2>
+
+        {organization ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300">
+                Aktuelle Organisation
+              </label>
+              <div className="mt-1 px-4 py-2 bg-blue-50 dark:bg-blue-900/30 rounded-md text-sm text-blue-900 dark:text-blue-100 border border-blue-200 dark:border-blue-800">
+                {organization.name}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center py-4">
+            <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
+              Du hast noch keine Organisation. Erstelle eine, um das Booking-System zu nutzen.
+            </p>
+            <Button onClick={createOrganization} disabled={orgLoading} className="gap-2">
+              {orgLoading ? (
+                <>
+                  <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Wird erstellt...
+                </>
+              ) : (
+                <>
+                  <Plus className="h-4 w-4" />
+                  Organisation erstellen
+                </>
+              )}
+            </Button>
           </div>
         )}
       </div>

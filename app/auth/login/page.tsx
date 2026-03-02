@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -29,21 +30,34 @@ export default function LoginPage() {
         return;
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
 
       if (error) {
-        toast.error(error.message);
+        // Detaillierte Fehlermeldungen
+        const errorMessages: Record<string, string> = {
+          'Invalid login credentials': 'E-Mail oder Passwort ist falsch',
+          'User not found': 'Kein Konto mit dieser E-Mail-Adresse gefunden',
+          'Email not confirmed': 'Bitte bestätige zuerst deine E-Mail-Adresse',
+          'Invalid email': 'Bitte gib eine gültige E-Mail-Adresse ein',
+        };
+        
+        const customMessage = errorMessages[error.message] || error.message;
+        toast.error(customMessage);
+        setLoading(false);
         return;
       }
 
-      toast.success('Erfolgreich angemeldet!');
-      router.push('/dashboard');
-      router.refresh();
+      if (data.user) {
+        toast.success('Erfolgreich angemeldet!');
+        router.push('/dashboard');
+        router.refresh();
+      }
     } catch (error) {
-      toast.error('Ein Fehler ist aufgetreten. Bitte versuchen Sie es erneut.');
+      console.error('Login error:', error);
+      toast.error('Ein Fehler ist aufgetreten. Bitte versuche es erneut.');
     } finally {
       setLoading(false);
     }
@@ -92,7 +106,16 @@ export default function LoginPage() {
             </div>
 
             <Button type="submit" disabled={loading} className="w-full">
-              {loading ? 'Wird angemeldet...' : isMockMode() ? 'Demo starten' : 'Anmelden'}
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Wird angemeldet...
+                </>
+              ) : isMockMode() ? (
+                'Demo starten'
+              ) : (
+                'Anmelden'
+              )}
             </Button>
           </form>
 

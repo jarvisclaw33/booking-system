@@ -1,9 +1,11 @@
 // @ts-nocheck
 'use client';
 
+import { useState } from 'react';
 import {
   format,
   isToday,
+  isSameDay,
   getHours,
   getMinutes,
 } from 'date-fns';
@@ -73,15 +75,12 @@ export function DayCalendar({
   startHour = 7,
   endHour = 20,
 }: DayCalendarProps) {
+  const [showNewBookingModal, setShowNewBookingModal] = useState(false);
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
 
   const dayBookings = bookings.filter((booking) => {
     const bookingDate = new Date(booking.start_time);
-    return (
-      bookingDate.getDate() === currentDate.getDate() &&
-      bookingDate.getMonth() === currentDate.getMonth() &&
-      bookingDate.getFullYear() === currentDate.getFullYear()
-    );
+    return isSameDay(bookingDate, currentDate);
   }).sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
 
   const now = new Date();
@@ -134,7 +133,7 @@ export function DayCalendar({
             {dayBookings.length} Buchung{dayBookings.length !== 1 ? 'en' : ''} heute
           </p>
         </div>
-        <Button className="gap-2 w-full sm:w-auto">
+        <Button className="gap-2 w-full sm:w-auto" onClick={() => setShowNewBookingModal(true)}>
           <Plus className="h-4 w-4" />
           Neue Buchung
         </Button>
@@ -158,63 +157,60 @@ export function DayCalendar({
             ))}
           </div>
 
-          {/* Timeline grid */}
+          {/* Timeline grid with bookings in hour slots */}
           <div className="ml-16 sm:ml-20 relative">
-            {hours.map((hour, idx) => (
-              <div
-                key={hour}
-                className="h-20 border-b border-gray-100 dark:border-slate-800 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
-              />
-            ))}
+            {hours.map((hour) => {
+              const hourBookings = dayBookings.filter(b => {
+                const bStart = new Date(b.start_time);
+                return getHours(bStart) === hour;
+              });
+              
+              return (
+                <div
+                  key={hour}
+                  className="h-20 border-b border-gray-100 dark:border-slate-800 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors relative"
+                >
+                  {/* Current time indicator for this hour */}
+                  {showNowLine && currentHour === hour && (
+                    <div className="absolute left-0 right-0 h-0.5 bg-red-500 z-10">
+                      <div className="absolute -left-1 -top-1.5 w-3 h-3 bg-red-500 rounded-full" />
+                    </div>
+                  )}
+                  
+                  {/* Bookings for this hour */}
+                  {hourBookings.map((booking, idx) => (
+                    <div
+                      key={booking.id}
+                      className={`absolute left-1 right-1 rounded border-l-2 p-1.5 text-xs cursor-pointer hover:shadow-md transition-shadow ${getServiceColor(
+                        booking.service
+                      )} ${getServiceTextColor(booking.service)}`}
+                      style={{
+                        top: idx === 0 ? '2px' : `${2 + idx * 32}px`,
+                        height: '28px',
+                        overflow: 'hidden',
+                        zIndex: 5,
+                      }}
+                      title={`${booking.guest_name} - ${booking.service}`}
+                    >
+                      <div className="font-bold truncate">{booking.guest_name}</div>
+                      <div className="truncate opacity-75 text-[10px]">{booking.service}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
 
-            {/* Current time line */}
+            {/* Current time line (full day) */}
             {showNowLine && (
               <div
-                className="absolute left-0 right-0 h-1 bg-red-500 shadow-md z-20"
+                className="absolute left-0 right-0 h-0.5 bg-red-500 shadow-md z-20"
                 style={{
-                  top: `${nowTopPercent}%`,
+                  top: `${((currentHour - startHour) + currentMinute / 60) / (endHour - startHour) * 100}%`,
                 }}
               >
                 <div className="absolute -left-2 -top-1.5 w-4 h-4 bg-red-500 rounded-full border-2 border-white dark:border-slate-900" />
               </div>
             )}
-
-            {/* Bookings */}
-            <div className="relative h-full">
-              {dayBookings.map((booking) => (
-                <div
-                  key={booking.id}
-                  className={`absolute left-2 right-2 rounded-lg border-l-4 p-3 shadow-sm cursor-pointer hover:shadow-md transition-shadow ${getServiceColor(
-                    booking.service
-                  )}`}
-                  style={calculateBookingPosition(booking)}
-                  title={booking.guest_name}
-                >
-                  {/* Booking content */}
-                  <div className="flex flex-col h-full justify-between">
-                    <div>
-                      <h3 className={`font-bold text-sm ${getServiceTextColor(booking.service)}`}>
-                        {booking.guest_name}
-                      </h3>
-                      <p className={`text-xs ${getServiceTextColor(booking.service)} opacity-75`}>
-                        {booking.service}
-                      </p>
-                    </div>
-                    <div className="flex items-center justify-between mt-1">
-                      <span className={`text-xs font-medium ${getServiceTextColor(booking.service)}`}>
-                        {formatTime(new Date(booking.start_time))} -{' '}
-                        {formatTime(new Date(booking.end_time))}
-                      </span>
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${getStatusBadgeColor(
-                        booking.status
-                      )}`}>
-                        {getStatusLabel(booking.status)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         </div>
       </div>
@@ -247,6 +243,23 @@ export function DayCalendar({
             <p className="text-2xl font-bold text-green-900 dark:text-green-100 mt-1">
               {dayBookings.length}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* New Booking Modal */}
+      {showNewBookingModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-lg p-6 max-w-md w-full shadow-xl">
+            <h3 className="text-lg font-bold mb-4">Neue Buchung</h3>
+            <p className="text-sm text-gray-600 dark:text-slate-400 mb-4">
+              Die Buchungsfunktion wird in Kürze verfügbar sein.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setShowNewBookingModal(false)}>
+                Schließen
+              </Button>
+            </div>
           </div>
         </div>
       )}

@@ -171,13 +171,18 @@ export default function BookPage() {
         customer_phone: customerPhone || null,
         start_time: selectedSlot.startTime,
         end_time: selectedSlot.endTime,
-        status: 'pending' as const,
         notes: notes || null
       }
       
-      const { error } = await supabase.from('bookings').insert(bookingData as any)
-
-      if (error) throw error
+      // Use API endpoint which handles organization_id lookup
+      const response = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bookingData)
+      })
+      
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.error || 'Booking failed')
 
       toast.success('Buchung erfolgreich! Wir bestätigen per E-Mail.')
       setStep(5) // Success step

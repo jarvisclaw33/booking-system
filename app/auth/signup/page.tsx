@@ -2,6 +2,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -115,7 +116,16 @@ export default function SignupPage() {
             </div>
 
             <Button type="submit" disabled={loading} className="w-full">
-              {loading ? 'Konto wird erstellt...' : isMockMode() ? 'Demo starten' : 'Registrieren'}
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Konto wird erstellt...
+                </>
+              ) : isMockMode() ? (
+                'Demo starten'
+              ) : (
+                'Registrieren'
+              )}
             </Button>
           </form>
 
