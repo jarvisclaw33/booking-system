@@ -10,7 +10,9 @@ const enhancedAvailabilitySchema = z.object({
   offeringId: z.string().uuid(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), // YYYY-MM-DD
   staffId: z.string().uuid().optional(), // Specific staff member
+  preferredStaffId: z.string().uuid().optional(), // Preferred staff member (smart mode)
   aggregated: z.boolean().optional(), // Show combined availability
+  mode: z.enum(['smart']).optional(),
   duration: z.number().int().positive().optional(),
 })
 
@@ -21,6 +23,7 @@ interface StaffAvailability {
   utilizationRate: number
   availableSlots: number
   totalSlots: number
+  priority?: number
 }
 
 interface AggregatedAvailability {
@@ -48,7 +51,9 @@ interface AggregatedAvailability {
  * - offeringId: required
  * - date: required (YYYY-MM-DD)
  * - staffId: optional (filter by specific staff member)
+ * - preferredStaffId: optional (preferred staff member for smart mode)
  * - aggregated: optional (show combined availability across staff)
+ * - mode: optional (smart)
  * - duration: optional (override offering duration)
  */
 export async function GET(request: NextRequest) {
@@ -60,7 +65,9 @@ export async function GET(request: NextRequest) {
       offeringId: searchParams.get('offeringId'),
       date: searchParams.get('date'),
       staffId: searchParams.get('staffId') || undefined,
+      preferredStaffId: searchParams.get('preferredStaffId') || undefined,
       aggregated: searchParams.get('aggregated') === 'true',
+      mode: searchParams.get('mode') || undefined,
       duration: searchParams.get('duration') ? parseInt(searchParams.get('duration')!) : undefined,
     }
 
@@ -72,7 +79,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const { locationId, offeringId, date, staffId, aggregated, duration: customDuration } = validationResult.data
+    const {
+      locationId,
+      offeringId,
+      date,
+      staffId,
+      preferredStaffId,
+      aggregated,
+      mode,
+      duration: customDuration,
+    } = validationResult.data
 
     const client = await createClient()
 
@@ -106,22 +122,27 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get staff members (resources with type='staff')
+    const isSmartMode = mode === 'smart'
+    const preferredId = preferredStaffId || staffId
+
+    // Get staff members (resources with type='staff') that can perform the offering
     let staffQuery = client
       .from('resources')
-      .select('id, name, capacity')
+      .select('id, name, capacity, resource_offerings!inner(priority, is_active, offering_id)')
       .eq('location_id', locationId)
       .eq('type', 'staff')
       .eq('is_active', true)
+      .eq('resource_offerings.offering_id', offeringId)
+      .eq('resource_offerings.is_active', true)
 
-    if (staffId) {
-      staffQuery = staffQuery.eq('id', staffId)
+    if (preferredId && !isSmartMode) {
+      staffQuery = staffQuery.eq('id', preferredId)
     }
 
-    const { data: staffMembers, error: staffError } = await staffQuery as any
+    const { data: staffMembersRaw, error: staffError } = await staffQuery as any
 
     if (staffError) throw staffError
-    if (!staffMembers || staffMembers.length === 0) {
+    if (!staffMembersRaw || staffMembersRaw.length === 0) {
       return NextResponse.json(
         aggregated
           ? { error: 'No staff members found' }
@@ -129,6 +150,13 @@ export async function GET(request: NextRequest) {
         { status: 404 }
       )
     }
+
+    const staffMembers = staffMembersRaw.map((staff: any) => ({
+      ...staff,
+      priority: Array.isArray(staff.resource_offerings)
+        ? staff.resource_offerings[0]?.priority ?? 0
+        : 0,
+    }))
 
     const dateObj = parse(date, 'yyyy-MM-dd', new Date())
     const dayOfWeek = dateObj.getDay()
@@ -257,11 +285,76 @@ export async function GET(request: NextRequest) {
         availableSlots,
         totalSlots,
         utilizationRate: totalSlots > 0 ? ((totalSlots - availableSlots) / totalSlots) * 100 : 0,
+        priority: staff.priority,
+      })
+    }
+
+    if (isSmartMode) {
+      const preferredAvailability = preferredId
+        ? staffAvailabilities.find(s => s.staffId === preferredId)
+        : undefined
+
+      const preferredStaffAvailableSlots = preferredAvailability
+        ? preferredAvailability.slots.filter(s => s.available)
+        : []
+
+      let fallbackNextAvailable: {
+        startTime: string
+        endTime: string
+        staffId: string
+        staffName: string
+      } | null = null
+      let reason: string | null = null
+
+      if (preferredId && preferredStaffAvailableSlots.length === 0) {
+        if (!preferredAvailability) {
+          reason = 'Preferred staff cannot perform selected offering'
+        }
+        const allAvailableSlots = staffAvailabilities.flatMap(s =>
+          s.slots
+            .filter(slot => slot.available)
+            .map(slot => ({
+              startTime: slot.startTime,
+              endTime: slot.endTime,
+              staffId: s.staffId,
+              staffName: s.staffName,
+              priority: s.priority ?? 0,
+            }))
+        )
+
+        if (allAvailableSlots.length > 0) {
+          allAvailableSlots.sort((a, b) => {
+            if (a.startTime === b.startTime) {
+              if (a.priority === b.priority) return a.staffName.localeCompare(b.staffName)
+              return a.priority - b.priority
+            }
+            return a.startTime.localeCompare(b.startTime)
+          })
+          const earliest = allAvailableSlots[0]
+          fallbackNextAvailable = {
+            startTime: earliest.startTime,
+            endTime: earliest.endTime,
+            staffId: earliest.staffId,
+            staffName: earliest.staffName,
+          }
+          if (!reason) reason = 'Preferred staff has no availability for selected date'
+        } else {
+          reason = 'No staff availability for selected date'
+        }
+      }
+
+      return NextResponse.json({
+        type: 'smart',
+        date,
+        preferredStaffId: preferredId || null,
+        preferredStaffAvailableSlots,
+        fallbackNextAvailable,
+        reason,
       })
     }
 
     // Return single staff member availability
-    if (staffId && staffAvailabilities.length > 0) {
+    if (preferredId && staffAvailabilities.length > 0 && !aggregated) {
       return NextResponse.json({
         type: 'individual',
         date,
