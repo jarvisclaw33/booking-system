@@ -22,10 +22,18 @@ interface Offering {
   color: string
 }
 
+interface StaffMember {
+  id: string
+  name: string
+  priority?: number
+}
+
 interface TimeSlot {
   startTime: string
   endTime: string
   available: boolean
+  staffId?: string
+  staffName?: string
 }
 
 export default function BookPage() {
@@ -36,9 +44,13 @@ export default function BookPage() {
   const [offerings, setOfferings] = useState<Offering[]>([])
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null)
   const [selectedOffering, setSelectedOffering] = useState<Offering | null>(null)
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([])
+  const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [availableSlots, setAvailableSlots] = useState<TimeSlot[]>([])
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null)
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null)
+  const [fallbackSlot, setFallbackSlot] = useState<TimeSlot | null>(null)
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   
@@ -56,16 +68,35 @@ export default function BookPage() {
   // Fetch offerings when location is selected
   useEffect(() => {
     if (selectedLocation) {
+      setSelectedOffering(null)
+      setStaffMembers([])
+      setSelectedStaff(null)
+      setAvailableSlots([])
+      setSelectedSlot(null)
+      setFallbackReason(null)
+      setFallbackSlot(null)
       fetchOfferings(selectedLocation.id)
     }
   }, [selectedLocation])
 
-  // Fetch availability when date/offering changes
+  // Fetch staff when offering is selected
+  useEffect(() => {
+    if (selectedOffering && selectedLocation) {
+      setSelectedStaff(null)
+      setAvailableSlots([])
+      setSelectedSlot(null)
+      setFallbackReason(null)
+      setFallbackSlot(null)
+      fetchStaffMembers(selectedLocation.id, selectedOffering.id)
+    }
+  }, [selectedOffering, selectedLocation])
+
+  // Fetch availability when date/offering/staff changes
   useEffect(() => {
     if (selectedOffering && selectedLocation && selectedDate) {
       fetchAvailability()
     }
-  }, [selectedOffering, selectedLocation, selectedDate])
+  }, [selectedOffering, selectedLocation, selectedDate, selectedStaff])
 
   async function fetchLocations() {
     setLoading(true)
@@ -112,41 +143,106 @@ export default function BookPage() {
     }
   }
 
-  async function fetchAvailability() {
+  async function fetchStaffMembers(locationId: string, offeringId: string) {
     setLoading(true)
     try {
+      const { data, error } = await supabase
+        .from('resource_offerings')
+        .select('priority, resources(id, name, type, location_id, is_active)')
+        .eq('offering_id', offeringId)
+        .eq('is_active', true)
+        .eq('resources.location_id', locationId)
+        .eq('resources.type', 'staff')
+        .eq('resources.is_active', true)
+
+      if (error) throw error
+
+      const mapped = (data || [])
+        .map((row: any) => ({
+          id: row.resources.id as string,
+          name: row.resources.name as string,
+          priority: row.priority ?? 0,
+        }))
+        .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+
+      setStaffMembers(mapped)
+    } catch (error) {
+      console.error('Error fetching staff members:', error)
+      setStaffMembers([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function combineSlots(staffDetails: Array<{ slots: TimeSlot[] }>) {
+    const slotMap = new Map<string, TimeSlot>()
+    staffDetails.forEach(staff => {
+      staff.slots.forEach(slot => {
+        const key = `${slot.startTime}|${slot.endTime}`
+        const existing = slotMap.get(key)
+        if (!existing) {
+          slotMap.set(key, { ...slot })
+        } else if (!existing.available && slot.available) {
+          slotMap.set(key, { ...existing, available: true })
+        }
+      })
+    })
+    return Array.from(slotMap.values()).sort((a, b) => a.startTime.localeCompare(b.startTime))
+  }
+
+  async function fetchAvailability() {
+    setLoading(true)
+    setFallbackReason(null)
+    setFallbackSlot(null)
+    try {
       const dateStr = selectedDate.toISOString().split('T')[0]
-      const response = await fetch('/api/availability', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (selectedStaff) {
+        const params = new URLSearchParams({
           locationId: selectedLocation!.id,
           offeringId: selectedOffering!.id,
           date: dateStr,
-        }),
-      })
-      const data = await response.json()
-      
-      if (data.slots) {
-        setAvailableSlots(data.slots)
-      } else {
-        // Generate mock slots if API fails
-        const mockSlots: TimeSlot[] = []
-        for (let hour = 9; hour < 18; hour++) {
-          for (let min = 0; min < 60; min += 30) {
-            const start = new Date(selectedDate)
-            start.setHours(hour, min, 0, 0)
-            const end = new Date(start)
-            end.setMinutes(end.getMinutes() + (selectedOffering?.duration_minutes || 45))
-            
-            mockSlots.push({
-              startTime: start.toISOString(),
-              endTime: end.toISOString(),
-              available: Math.random() > 0.3
+          mode: 'smart',
+          preferredStaffId: selectedStaff.id,
+        })
+        const response = await fetch(`/api/availability/enhanced?${params.toString()}`)
+        const data = await response.json()
+
+        if (data.type === 'smart') {
+          const slots = (data.preferredStaffAvailableSlots || []).map((slot: TimeSlot) => ({
+            ...slot,
+            available: true,
+            staffId: selectedStaff.id,
+            staffName: selectedStaff.name,
+          }))
+          setAvailableSlots(slots)
+
+          if (data.fallbackNextAvailable) {
+            setFallbackReason(data.reason || 'Bevorzugter Mitarbeiter ist nicht verfügbar')
+            setFallbackSlot({
+              ...data.fallbackNextAvailable,
+              available: true,
+              staffId: data.fallbackNextAvailable.staffId,
+              staffName: data.fallbackNextAvailable.staffName,
             })
           }
         }
-        setAvailableSlots(mockSlots)
+      } else {
+        const params = new URLSearchParams({
+          locationId: selectedLocation!.id,
+          offeringId: selectedOffering!.id,
+          date: dateStr,
+          aggregated: 'true',
+        })
+        const response = await fetch(`/api/availability/enhanced?${params.toString()}`)
+        const data = await response.json()
+
+        if (data.type === 'aggregated' && data.staffDetails) {
+          setAvailableSlots(combineSlots(data.staffDetails))
+        } else if (data.slots) {
+          setAvailableSlots(data.slots)
+        } else {
+          setAvailableSlots([])
+        }
       }
     } catch (error) {
       console.error('Error fetching availability:', error)
@@ -163,19 +259,21 @@ export default function BookPage() {
 
     setSubmitting(true)
     try {
+      const resourceId = selectedSlot.staffId || selectedStaff?.id
       const bookingData = {
-        location_id: selectedLocation.id,
-        offering_id: selectedOffering.id,
-        customer_name: customerName,
-        customer_email: customerEmail,
-        customer_phone: customerPhone || null,
-        start_time: selectedSlot.startTime,
-        end_time: selectedSlot.endTime,
-        notes: notes || null
+        locationId: selectedLocation.id,
+        offeringId: selectedOffering.id,
+        resourceId: resourceId || undefined,
+        customerName: customerName,
+        customerEmail: customerEmail,
+        customerPhone: customerPhone || undefined,
+        startTime: selectedSlot.startTime,
+        endTime: selectedSlot.endTime,
+        notes: notes || undefined,
       }
       
-      // Use API endpoint which handles organization_id lookup
-      const response = await fetch('/api/bookings', {
+      // Use enhanced API endpoint which handles organization_id lookup and staff validation
+      const response = await fetch('/api/bookings/enhanced', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bookingData)
@@ -185,7 +283,7 @@ export default function BookPage() {
       if (!response.ok) throw new Error(result.error || 'Booking failed')
 
       toast.success('Buchung erfolgreich! Wir bestätigen per E-Mail.')
-      setStep(5) // Success step
+      setStep(6) // Success step
     } catch (error) {
       console.error('Error creating booking:', error)
       toast.error('Buchung fehlgeschlagen. Bitte versuchen Sie es erneut.')
@@ -223,7 +321,7 @@ export default function BookPage() {
 
         {/* Progress Steps */}
         <div className="flex items-center justify-center mb-8">
-          {[1, 2, 3, 4].map((s) => (
+          {[1, 2, 3, 4, 5].map((s) => (
             <div key={s} className="flex items-center">
               <div className={`
                 w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium
@@ -231,7 +329,7 @@ export default function BookPage() {
               `}>
                 {step > s ? <Check className="w-4 h-4" /> : s}
               </div>
-              {s < 4 && (
+              {s < 5 && (
                 <div className={`w-12 h-0.5 ${step > s ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700'}`} />
               )}
             </div>
@@ -317,7 +415,7 @@ export default function BookPage() {
           </div>
         )}
 
-        {/* Step 3: Date & Time Selection */}
+        {/* Step 3: Staff Selection */}
         {step === 3 && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
             <button 
@@ -326,7 +424,63 @@ export default function BookPage() {
             >
               <ChevronLeft className="w-4 h-4" /> Zurück
             </button>
-            <h2 className="text-xl font-semibold mb-4 dark:text-white">3. Datum & Uhrzeit</h2>
+            <h2 className="text-xl font-semibold mb-4 dark:text-white">3. Mitarbeiter auswählen</h2>
+            {loading ? (
+              <div className="text-center py-8 text-gray-500">Laden...</div>
+            ) : (
+              <div className="space-y-3">
+                <button
+                  onClick={() => { setSelectedStaff(null); setStep(4) }}
+                  className={`w-full p-4 rounded-lg border-2 text-left transition-all hover:border-blue-500 ${
+                    selectedStaff === null
+                      ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20'
+                      : 'border-gray-200 dark:border-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <User className="w-5 h-5 text-blue-600" />
+                    <div>
+                      <div className="font-medium dark:text-white">Keine Präferenz</div>
+                      <div className="text-sm text-gray-500">Beliebiger Mitarbeiter</div>
+                    </div>
+                  </div>
+                </button>
+                {staffMembers.length === 0 && (
+                  <div className="text-sm text-gray-500">
+                    Keine Mitarbeiter für diese Leistung verfügbar.
+                  </div>
+                )}
+                {staffMembers.map((staff) => (
+                  <button
+                    key={staff.id}
+                    onClick={() => { setSelectedStaff(staff); setStep(4) }}
+                    className={`w-full p-4 rounded-lg border-2 text-left transition-all hover:border-blue-500 ${
+                      selectedStaff?.id === staff.id
+                        ? 'border-blue-600 bg-blue-50 dark:bg-blue-900/20'
+                        : 'border-gray-200 dark:border-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <User className="w-5 h-5 text-blue-600" />
+                      <div className="font-medium dark:text-white">{staff.name}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Step 4: Date & Time Selection */}
+        {step === 4 && (
+          <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
+            <button 
+              onClick={() => setStep(3)}
+              className="flex items-center gap-1 text-gray-500 mb-4 hover:text-gray-700"
+            >
+              <ChevronLeft className="w-4 h-4" /> Zurück
+            </button>
+            <h2 className="text-xl font-semibold mb-4 dark:text-white">4. Datum & Uhrzeit</h2>
             
             {/* Simple Date Navigation */}
             <div className="flex items-center justify-between mb-4">
@@ -358,42 +512,76 @@ export default function BookPage() {
             {loading ? (
               <div className="text-center py-8 text-gray-500">Verfügbarkeit wird geladen...</div>
             ) : (
-              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                {availableSlots
-                  .filter(slot => slot.available)
-                  .map((slot, idx) => (
-                    <button
-                      key={idx}
-                      onClick={() => { setSelectedSlot(slot); setStep(4) }}
-                      className={`p-2 rounded-lg text-sm font-medium transition-all ${
-                        selectedSlot?.startTime === slot.startTime
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-blue-100 dark:hover:bg-blue-900'
-                      }`}
-                    >
-                      {formatTime(slot.startTime)}
-                    </button>
-                  ))}
-                {availableSlots.filter(s => s.available).length === 0 && (
-                  <div className="col-span-full text-center py-4 text-gray-500">
-                    Keine freien Termine für dieses Datum
+              <>
+                {fallbackReason && (
+                  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="font-medium">Hinweis</div>
+                    <div>
+                      {fallbackReason}
+                      {fallbackSlot && (
+                        <>
+                          {' '}Nächster Termin: {formatTime(fallbackSlot.startTime)}
+                          {fallbackSlot.staffName ? ` (${fallbackSlot.staffName})` : ''}
+                        </>
+                      )}
+                    </div>
+                    {fallbackSlot && (
+                      <button
+                        onClick={() => {
+                          if (fallbackSlot.staffId) {
+                            const fallbackStaff = staffMembers.find(s => s.id === fallbackSlot.staffId) || {
+                              id: fallbackSlot.staffId,
+                              name: fallbackSlot.staffName || 'Mitarbeiter',
+                            }
+                            setSelectedStaff(fallbackStaff)
+                          }
+                          setSelectedSlot(fallbackSlot)
+                          setStep(5)
+                        }}
+                        className="mt-2 text-sm font-medium text-amber-900 underline"
+                      >
+                        Termin übernehmen
+                      </button>
+                    )}
                   </div>
                 )}
-              </div>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                  {availableSlots
+                    .filter(slot => slot.available)
+                    .map((slot, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => { setSelectedSlot(slot); setStep(5) }}
+                        className={`p-2 rounded-lg text-sm font-medium transition-all ${
+                          selectedSlot?.startTime === slot.startTime
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-blue-100 dark:hover:bg-blue-900'
+                        }`}
+                      >
+                        {formatTime(slot.startTime)}
+                      </button>
+                    ))}
+                  {availableSlots.filter(s => s.available).length === 0 && (
+                    <div className="col-span-full text-center py-4 text-gray-500">
+                      Keine freien Termine für dieses Datum
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}
 
-        {/* Step 4: Customer Details */}
-        {step === 4 && (
+        {/* Step 5: Customer Details */}
+        {step === 5 && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6">
             <button 
-              onClick={() => setStep(3)}
+              onClick={() => setStep(4)}
               className="flex items-center gap-1 text-gray-500 mb-4 hover:text-gray-700"
             >
               <ChevronLeft className="w-4 h-4" /> Zurück
             </button>
-            <h2 className="text-xl font-semibold mb-4 dark:text-white">4. Ihre Daten</h2>
+            <h2 className="text-xl font-semibold mb-4 dark:text-white">5. Ihre Daten</h2>
             
             <div className="space-y-4">
               <div>
@@ -449,6 +637,7 @@ export default function BookPage() {
                 <div className="text-sm space-y-1 text-gray-600 dark:text-gray-300">
                   <p><span className="font-medium">Standort:</span> {selectedLocation?.name}</p>
                   <p><span className="font-medium">Leistung:</span> {selectedOffering?.name}</p>
+                  <p><span className="font-medium">Mitarbeiter:</span> {selectedStaff?.name || selectedSlot?.staffName || 'Keine Präferenz'}</p>
                   <p><span className="font-medium">Datum:</span> {selectedDate.toLocaleDateString('de-DE')}</p>
                   <p><span className="font-medium">Uhrzeit:</span> {selectedSlot && formatTime(selectedSlot.startTime)}</p>
                   <p><span className="font-medium">Preis:</span> {selectedOffering && formatPrice(selectedOffering.price_cents)}</p>
@@ -466,8 +655,8 @@ export default function BookPage() {
           </div>
         )}
 
-        {/* Step 5: Success */}
-        {step === 5 && (
+        {/* Step 6: Success */}
+        {step === 6 && (
           <div className="bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6 text-center">
             <div className="w-16 h-16 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-4">
               <Check className="w-8 h-8 text-green-600" />
