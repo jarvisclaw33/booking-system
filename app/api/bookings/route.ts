@@ -168,8 +168,7 @@ export async function POST(request: NextRequest) {
       .eq('location_id', locationId)
       .eq('offering_id', offeringId)
       .in('status', ['pending', 'confirmed'])
-      .lt('end_time', endTime)
-      .gt('start_time', startTime)
+      .or(`and(start_time.lt.${endTime},end_time.gt.${startTime})`)
       .limit(1)
 
     if (conflictError) throw conflictError

@@ -191,6 +191,21 @@ export async function POST(request: NextRequest) {
           { status: 404 }
         )
       }
+
+      const { data: resourceOffering, error: resourceOfferingError } = await client
+        .from('resource_offerings')
+        .select('resource_id')
+        .eq('resource_id', resourceId)
+        .eq('offering_id', offeringId)
+        .eq('is_active', true)
+        .single() as any
+
+      if (resourceOfferingError || !resourceOffering) {
+        return NextResponse.json(
+          { error: 'Mitarbeiter kann diese Leistung nicht anbieten' },
+          { status: 400 }
+        )
+      }
     }
 
     // Check availability
@@ -200,8 +215,7 @@ export async function POST(request: NextRequest) {
       .eq('location_id', locationId)
       .eq('offering_id', offeringId)
       .in('status', ['pending', 'confirmed'])
-      .lt('end_time', endTime)
-      .gt('start_time', startTime)
+      .or(`and(start_time.lt.${endTime},end_time.gt.${startTime})`)
 
     if (resourceId) {
       conflictQuery = conflictQuery.eq('resource_id', resourceId)
